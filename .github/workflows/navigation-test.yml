@@ -15,6 +15,12 @@ on:
 permissions:
   contents: read
 
+# Uploading several files means several pushes, and each one starts a run.
+# Only the last one is worth finishing, so a new run cancels the one before it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   navigate:
     name: Drive the Simulator and capture named screens
@@ -38,7 +44,7 @@ jobs:
           # the .github folder had not been uploaded with the rest. The whole
           # AppCaptureTests suite never executed and nothing said so. This
           # marker makes the version obvious in the log and in the summary.
-          echo "WORKFLOW_VERSION=round-4"
+          echo "WORKFLOW_VERSION=round-6"
           echo "macOS:";  sw_vers
           echo "Xcode:";  xcodebuild -version
           echo "Python:"; python3 --version
@@ -100,28 +106,13 @@ jobs:
 
       # ---------------- Only what is still missing ----------------
       #
-      # VariantCaptureTests and GestureProbeTests are deliberately NOT run.
-      # Their output is already captured, verified by eye and filed under
-      # figures/simulator. Re-running them would burn runner time to produce
-      # files we already have.
-
-      - name: Capture the missing Settings figures
-        run: |
-          set +e
-          xcodebuild test-without-building \
-            -project SimShot.xcodeproj -scheme SimShot \
-            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
-            -derivedDataPath build \
-            -resultBundlePath out/main.xcresult \
-            -only-testing:SimShotUITests/FigureCaptureTests \
-            CODE_SIGNING_ALLOWED=NO \
-            > out/main.log 2>&1
-          STATUS=$?
-          set -e
-          echo "xcodebuild exit code: $STATUS"
-          grep -E "^(CAPTURE|MISSED|CLAIM|SWITCH|SCROLL|ALERTS)" out/main.log || true
-
-      # ---------------- App screens ----------------
+      # FigureCaptureTests, VariantCaptureTests and GestureProbeTests are
+      # deliberately NOT run. Every figure they target is captured, verified by
+      # eye and filed under figures/simulator. Re-running them would burn
+      # runner time to produce files we already have.
+      #
+      # Round 5 reached every app but photographed six welcome sheets instead
+      # of the apps behind them. Launcher.open now taps through those.
 
       - name: Capture the app figures
         run: |
@@ -145,7 +136,7 @@ jobs:
         if: always()
         run: |
           chmod +x extract-screenshots.sh
-          for pass in main apps; do
+          for pass in apps; do
             if [ -d "out/$pass.xcresult" ]; then
               echo "########## $pass ##########"
               ./extract-screenshots.sh "out/$pass.xcresult" "out/screenshots/$pass" || true
@@ -162,7 +153,7 @@ jobs:
           {
             echo "# What the run reported"
             echo
-            echo "Workflow version: round-4"
+            echo "Workflow version: round-6"
             echo
             echo "## Captures"
             grep -h "^CAPTURE" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
