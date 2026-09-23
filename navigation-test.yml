@@ -1,0 +1,260 @@
+name: Simulator navigation test
+
+# Run by hand from the Actions tab, and on a push whenever the test code or
+# the project specification changes.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'project.yml'
+      - 'SimShotHost/**'
+      - 'SimShotUITests/**'
+      - 'tools/**'
+      - 'make-sim.sh'
+      - 'extract-screenshots.sh'
+      - '.github/workflows/navigation-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  navigate:
+    name: Drive the Simulator and capture named screens
+    # xcode-27 is the STANDARD GitHub-hosted runner.
+    # Do not change this to xcode-27-xlarge: larger runners are billed and are
+    # not covered by the free allowance for public repositories.
+    runs-on: xcode-27
+    timeout-minutes: 90
+
+    env:
+      DEVICE: "iPhone 18 Pro"
+      RUNTIME: "iOS 27.0"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Report what this runner has
+        run: |
+          echo "macOS:";  sw_vers
+          echo "Xcode:";  xcodebuild -version
+          echo "Python:"; python3 --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        run: |
+          xcodegen generate --spec project.yml
+          xcodebuild -list -project SimShot.xcodeproj
+
+      - name: Create and boot the simulator
+        id: sim
+        run: |
+          chmod +x make-sim.sh
+          UDID=$(./make-sim.sh "$DEVICE" "$RUNTIME" simshot-nav)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Booted $UDID"
+
+      - name: Give the simulator a clean status bar
+        run: |
+          mkdir -p out
+          UDID="${{ steps.sim.outputs.udid }}"
+          # A neutral, repeatable status bar: a fixed clock, full signal and a
+          # charged battery, and no carrier name. Without this the clock is
+          # whatever time the runner booted at and there is no signal at all,
+          # so two runs are never comparable.
+          xcrun simctl status_bar "$UDID" override \
+            --time "9:41" \
+            --dataNetwork wifi --wifiMode active --wifiBars 3 \
+            --cellularMode active --cellularBars 4 \
+            --batteryState charged --batteryLevel 100 \
+            || echo "NOTE: status_bar override was rejected. Continuing."
+          xcrun simctl ui "$UDID" appearance light || true
+          sleep 3
+          xcrun simctl io "$UDID" screenshot out/status-bar-check.png
+          sips -g pixelWidth -g pixelHeight out/status-bar-check.png
+
+      - name: Build the test bundle
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project SimShot.xcodeproj \
+            -scheme SimShot \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee out/build.log | tail -40
+
+      # ---------------- the representative figure set ----------------
+
+      - name: Capture the representative figure set
+        run: |
+          set +e
+          xcodebuild test-without-building \
+            -project SimShot.xcodeproj \
+            -scheme SimShot \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build \
+            -resultBundlePath out/main.xcresult \
+            -only-testing:SimShotUITests/FigureCaptureTests \
+            CODE_SIGNING_ALLOWED=NO \
+            > out/main.log 2>&1
+          STATUS=$?
+          set -e
+          echo "xcodebuild exit code: $STATUS"
+          grep -E "^(CAPTURE|MISSED|CLAIM)" out/main.log || true
+          tail -60 out/main.log
+
+      # ---------------- the probes ----------------
+
+      - name: Probe the gestures and the other apps
+        run: |
+          set +e
+          xcodebuild test-without-building \
+            -project SimShot.xcodeproj \
+            -scheme SimShot \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build \
+            -resultBundlePath out/probes.xcresult \
+            -only-testing:SimShotUITests/GestureProbeTests \
+            CODE_SIGNING_ALLOWED=NO \
+            > out/probes.log 2>&1
+          STATUS=$?
+          set -e
+          echo "xcodebuild exit code: $STATUS"
+          grep -E "^(CAPTURE|MISSED)" out/probes.log || true
+          tail -40 out/probes.log
+
+      # ---------------- the same screens under three states ----------------
+
+      - name: Variant pass, normal text and light appearance
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          xcrun simctl ui "$UDID" appearance light || true
+          xcrun simctl ui "$UDID" content_size large || true
+          sleep 5
+          set +e
+          xcodebuild test-without-building \
+            -project SimShot.xcodeproj -scheme SimShot \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath build \
+            -resultBundlePath out/variant-normal.xcresult \
+            -only-testing:SimShotUITests/VariantCaptureTests \
+            TEST_RUNNER_SHOT_SUFFIX=normal \
+            CODE_SIGNING_ALLOWED=NO \
+            > out/variant-normal.log 2>&1
+          STATUS=$?
+          set -e
+          echo "exit: $STATUS"
+          grep -E "^(CAPTURE|MISSED)" out/variant-normal.log || true
+
+      - name: Variant pass, large accessibility text
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          xcrun simctl ui "$UDID" content_size accessibility-extra-large || true
+          sleep 5
+          set +e
+          xcodebuild test-without-building \
+            -project SimShot.xcodeproj -scheme SimShot \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath build \
+            -resultBundlePath out/variant-large-text.xcresult \
+            -only-testing:SimShotUITests/VariantCaptureTests \
+            TEST_RUNNER_SHOT_SUFFIX=large-text \
+            CODE_SIGNING_ALLOWED=NO \
+            > out/variant-large-text.log 2>&1
+          STATUS=$?
+          set -e
+          echo "exit: $STATUS"
+          grep -E "^(CAPTURE|MISSED)" out/variant-large-text.log || true
+
+      - name: Variant pass, dark appearance
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          xcrun simctl ui "$UDID" content_size large || true
+          xcrun simctl ui "$UDID" appearance dark || true
+          sleep 5
+          set +e
+          xcodebuild test-without-building \
+            -project SimShot.xcodeproj -scheme SimShot \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath build \
+            -resultBundlePath out/variant-dark.xcresult \
+            -only-testing:SimShotUITests/VariantCaptureTests \
+            TEST_RUNNER_SHOT_SUFFIX=dark \
+            CODE_SIGNING_ALLOWED=NO \
+            > out/variant-dark.log 2>&1
+          STATUS=$?
+          set -e
+          echo "exit: $STATUS"
+          grep -E "^(CAPTURE|MISSED)" out/variant-dark.log || true
+
+      # ---------------- pull the images out ----------------
+
+      - name: Extract the screenshots
+        if: always()
+        run: |
+          chmod +x extract-screenshots.sh
+          for pass in main probes variant-normal variant-large-text variant-dark; do
+            if [ -d "out/$pass.xcresult" ]; then
+              echo "########## $pass ##########"
+              ./extract-screenshots.sh "out/$pass.xcresult" "out/screenshots/$pass" || true
+            else
+              echo "no result bundle for $pass"
+            fi
+          done
+
+      - name: Summarize what the tests reported
+        if: always()
+        run: |
+          # `grep .` at the end of each pipeline fails on empty input, which is
+          # what makes the "none" fallback fire instead of leaving a blank.
+          {
+            echo "# What the run reported"
+            echo
+            echo "## Captures"
+            grep -h "^CAPTURE" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
+            echo "## Screens that could not be reached"
+            grep -h "^MISSED" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
+            echo "## Interface label checks"
+            grep -h "^CLAIM" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
+            echo "## Rows found in the Settings root"
+            grep -h "^SETTINGS_ROOT_ROWS" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
+            echo "## Test failures reported by xcodebuild"
+            grep -hE "error:|Failing tests:|\*\* TEST" out/*.log 2>/dev/null | sort -u | head -40 | grep . || echo "none"
+          } | tee out/run-summary.txt
+          cat out/run-summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Shut the simulator down
+        if: always()
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          xcrun simctl shutdown "$UDID" || true
+          xcrun simctl delete   "$UDID" || true
+
+      - name: Upload everything
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigation-output
+          path: |
+            out/screenshots/**
+            out/run-summary.txt
+            out/status-bar-check.png
+            out/*.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload the raw result bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigation-xcresult
+          path: out/*.xcresult
+          if-no-files-found: warn
+          retention-days: 7
