@@ -237,8 +237,42 @@ enum SettingsApp {
 
 enum Launcher {
 
-    /// Launches an app and clears whatever prompt it or its predecessor put on
-    /// screen. Returns nil when the app never reached the foreground.
+    /// Apps on this runtime open onto a "What's New" or welcome sheet carrying
+    /// a Continue button. Clearing alerts does not clear those, and round 5
+    /// photographed six welcome sheets instead of the apps behind them:
+    /// Photos, Maps, Passwords and the rest.
+    ///
+    /// Tapping through them is the same action a reader performs on their own
+    /// first launch, so nothing is being faked or skipped.
+    @discardableResult
+    static func dismissOnboarding(in app: XCUIApplication, rounds: Int = 6) -> Int {
+        let advance = ["Continue", "Get Started", "Not Now", "Skip",
+                       "Later", "Dismiss", "Close", "Unlock"]
+        var taps = 0
+
+        for _ in 0..<rounds {
+            Alerts.dismissAll(in: app)
+            var tapped = false
+            for title in advance {
+                let button = app.buttons[title].firstMatch
+                if button.exists, button.isHittable {
+                    button.tap()
+                    taps += 1
+                    tapped = true
+                    sleep(3)
+                    break
+                }
+            }
+            if !tapped { break }
+        }
+
+        if taps > 0 { print("ONBOARDING\tadvanced past \(taps) screen(s)") }
+        return taps
+    }
+
+    /// Launches an app, clears whatever prompt it or its predecessor put on
+    /// screen, and taps through any welcome sheet. Returns nil when the app
+    /// never reached the foreground.
     static func open(_ bundleID: String, settle: UInt32 = 4) -> XCUIApplication? {
         let app = XCUIApplication(bundleIdentifier: bundleID)
         app.terminate()
@@ -246,7 +280,8 @@ enum Launcher {
         guard app.wait(for: .runningForeground, timeout: 45) else { return nil }
         sleep(settle)
         Alerts.dismissAll(in: app)
-        sleep(1)
+        dismissOnboarding(in: app)
+        sleep(2)
         return app
     }
 
