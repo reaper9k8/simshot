@@ -1,11 +1,13 @@
 import XCTest
 
-/// Probes for the things the first run left unresolved. None of these is a
-/// planned figure yet. The point is to find out what the runtime will and
-/// will not do, so the answer comes from a screenshot rather than a guess.
+/// Gestures, and the two permission prompts the second run captured by
+/// accident. Those prompts turned out to be worth having on purpose: Apple
+/// publishes no list of the per app location choices, and the prompt shows
+/// them.
 ///
-/// This suite is run separately in CI and is allowed to fail without failing
-/// the build.
+/// Screens the second run settled are not repeated. The Home Screen, Control
+/// Center and App Library are all too sparse to print and no change to this
+/// script would fix that.
 final class GestureProbeTests: XCTestCase {
 
     private var springboard: XCUIApplication {
@@ -16,13 +18,11 @@ final class GestureProbeTests: XCTestCase {
         continueAfterFailure = true
     }
 
-    private func goHome() {
-        XCUIDevice.shared.press(.home)
-        sleep(3)
+    override func tearDownWithError() throws {
+        // Never leave a prompt on screen for the next test to inherit.
+        Alerts.dismissAll()
     }
 
-    /// Drags between two points given as fractions of the screen, which keeps
-    /// the gesture correct whichever model is booted.
     private func drag(fromX x1: CGFloat, y1: CGFloat,
                       toX x2: CGFloat, y2: CGFloat,
                       hold: TimeInterval = 0) {
@@ -39,108 +39,80 @@ final class GestureProbeTests: XCTestCase {
         sleep(3)
     }
 
-    // MARK: - Home Screen
+    // MARK: - App Switcher, with enough cards to be worth looking at
 
-    func test_probe_01_home_screen() {
-        goHome()
-        capture("probe-home-screen",
-                "Home Screen. Note that the test runner and host app now have icons here.")
-    }
+    /// The second run produced an App Switcher holding one card, which teaches
+    /// a reader nothing about switching between apps. Open several first.
+    func test_probe_01_app_switcher_with_several_apps() {
+        let sequence = [SimApp.contacts, SimApp.photos, SimApp.safari, SimApp.settings]
+        for bundleID in sequence {
+            _ = Launcher.open(bundleID, settle: 3)
+        }
 
-    // MARK: - Control Center, swipe down from the top right corner
-
-    func test_probe_02_control_center() {
-        goHome()
-        drag(fromX: 0.93, y1: 0.004, toX: 0.93, y2: 0.55)
-        capture("probe-control-center", "after a swipe down from the top right corner")
-    }
-
-    // MARK: - Notification Center, swipe down from the top left corner
-
-    func test_probe_03_notification_center() {
-        goHome()
-        drag(fromX: 0.18, y1: 0.004, toX: 0.18, y2: 0.60)
-        capture("probe-notification-center", "after a swipe down from the top left corner")
-    }
-
-    // MARK: - App Switcher, swipe up from the bottom edge and pause
-
-    func test_probe_04_app_switcher() {
-        _ = SettingsApp.open()
-        sleep(2)
         drag(fromX: 0.5, y1: 0.999, toX: 0.5, y2: 0.55, hold: 1.2)
-        capture("probe-app-switcher", "after a swipe up from the bottom edge with a pause")
+        capture("FIG-04-app-switcher",
+                "The App Switcher after opening four apps in turn")
     }
 
-    // MARK: - Spotlight, swipe down on the middle of the Home Screen
+    // MARK: - Spotlight, with the Home press made deterministic
 
-    func test_probe_05_spotlight() {
-        goHome()
+    /// The second run captured the Settings list here, because pressing Home
+    /// did not take while an app held the foreground.
+    func test_probe_02_spotlight() {
+        Launcher.goHome(terminating: [SimApp.settings, SimApp.safari,
+                                      SimApp.photos, SimApp.contacts])
+        capture("probe-home-before-spotlight",
+                "Confirms the Home Screen really is showing before the swipe")
+
         drag(fromX: 0.5, y1: 0.35, toX: 0.5, y2: 0.80)
-        capture("probe-spotlight", "after a swipe down on the middle of the Home Screen")
+        capture("FIG-04-spotlight", "After a swipe down on the middle of the Home Screen")
     }
 
-    // MARK: - App Library, swipe left past the last Home Screen page
+    // MARK: - The permission prompts, captured on purpose
 
-    func test_probe_06_app_library() {
-        goHome()
-        for _ in 0..<3 {
-            springboard.swipeLeft()
-            sleep(1)
+    /// Apple publishes no list of the per app location choices, and the book
+    /// is currently barred from naming them. The prompt names them.
+    func test_probe_08_location_permission_prompt() {
+        let maps = XCUIApplication(bundleIdentifier: SimApp.maps)
+        maps.terminate()
+        maps.launch()
+        _ = maps.wait(for: .runningForeground, timeout: 45)
+        sleep(5)
+
+        let alert = springboard.alerts.firstMatch
+        guard alert.waitForExistence(timeout: 15) else {
+            maps.terminate()
+            return missed("location-prompt", "no location prompt appeared")
         }
-        sleep(2)
-        capture("probe-app-library", "after swiping left past the last Home Screen page")
+
+        capture("FIG-22-05-location-prompt",
+                "The location permission prompt, with all three choices",
+                keepAlerts: true)
+        inventory("location-prompt", alert.buttons.allElementsBoundByIndex.map { $0.label })
+
+        Alerts.dismissAll(in: maps)
+        maps.terminate()
     }
 
-    // MARK: - Every app the runtime actually ships
-
-    func test_probe_07_apps_that_exist() {
-        let apps: [(id: String, name: String)] = [
-            (SimApp.contacts,  "contacts"),
-            (SimApp.messages,  "messages"),
-            (SimApp.passwords, "passwords"),
-            (SimApp.health,    "health"),
-            (SimApp.safari,    "safari"),
-            (SimApp.maps,      "maps"),
-            (SimApp.photos,    "photos"),
-            (SimApp.wallet,    "wallet"),
-            (SimApp.calendar,  "calendar"),
-            (SimApp.reminders, "reminders"),
-            (SimApp.files,     "files")
-        ]
-
-        for app in apps {
-            let target = XCUIApplication(bundleIdentifier: app.id)
-            target.terminate()
-            target.launch()
-            let reached = target.wait(for: .runningForeground, timeout: 40)
-            sleep(4)
-            capture("probe-app-\(app.name)",
-                    reached ? "launched \(app.id)"
-                            : "did NOT reach the foreground: \(app.id)")
-            target.terminate()
-            sleep(1)
-        }
-    }
-
-    // MARK: - Health, on the way to Medical ID
-
-    /// Medical ID is FIG-24-01. Health is present on this runtime, so the
-    /// question is only whether the screen can be reached without an account.
-    func test_probe_08_medical_id() {
+    func test_probe_09_notification_permission_prompt() {
         let health = XCUIApplication(bundleIdentifier: SimApp.health)
         health.terminate()
         health.launch()
-        _ = health.wait(for: .runningForeground, timeout: 40)
-        sleep(5)
-        capture("probe-health-launch", "Health on first launch")
+        _ = health.wait(for: .runningForeground, timeout: 45)
+        sleep(6)
 
-        if health.scrollToRow("Medical ID") != nil {
-            _ = health.tapRow("Medical ID")
-            sleep(3)
-            capture("probe-medical-id", "after tapping Medical ID")
-        } else {
-            missed("probe-medical-id", "no Medical ID row reachable from the first screen")
+        let alert = springboard.alerts.firstMatch
+        guard alert.waitForExistence(timeout: 15) else {
+            health.terminate()
+            return missed("notification-prompt", "no notification prompt appeared")
         }
+
+        capture("FIG-22-06-notification-prompt",
+                "The notification permission prompt",
+                keepAlerts: true)
+        inventory("notification-prompt", alert.buttons.allElementsBoundByIndex.map { $0.label })
+
+        Alerts.dismissAll(in: health)
+        health.terminate()
     }
 }
