@@ -1,7 +1,5 @@
 name: Simulator navigation test
 
-# Run by hand from the Actions tab, and on a push whenever the test code or
-# the project specification changes.
 on:
   workflow_dispatch:
   push:
@@ -36,9 +34,22 @@ jobs:
 
       - name: Report what this runner has
         run: |
+          # The round 3 run silently used a stale copy of this file, because
+          # the .github folder had not been uploaded with the rest. The whole
+          # AppCaptureTests suite never executed and nothing said so. This
+          # marker makes the version obvious in the log and in the summary.
+          echo "WORKFLOW_VERSION=round-4"
           echo "macOS:";  sw_vers
           echo "Xcode:";  xcodebuild -version
           echo "Python:"; python3 --version
+
+      - name: Confirm both test suites exist in this checkout
+        run: |
+          for suite in FigureCaptureTests AppCaptureTests; do
+            test -f "SimShotUITests/$suite.swift" \
+              || { echo "FAIL: SimShotUITests/$suite.swift is missing from the checkout"; exit 1; }
+            echo "found SimShotUITests/$suite.swift"
+          done
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -71,6 +82,7 @@ jobs:
             --batteryState charged --batteryLevel 100 \
             || echo "NOTE: status_bar override was rejected. Continuing."
           xcrun simctl ui "$UDID" appearance light || true
+          xcrun simctl ui "$UDID" content_size large || true
           sleep 3
           xcrun simctl io "$UDID" screenshot out/status-bar-check.png
           sips -g pixelWidth -g pixelHeight out/status-bar-check.png
@@ -86,14 +98,18 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee out/build.log | tail -40
 
-      # ---------------- the representative figure set ----------------
+      # ---------------- Only what is still missing ----------------
+      #
+      # VariantCaptureTests and GestureProbeTests are deliberately NOT run.
+      # Their output is already captured, verified by eye and filed under
+      # figures/simulator. Re-running them would burn runner time to produce
+      # files we already have.
 
-      - name: Capture the representative figure set
+      - name: Capture the missing Settings figures
         run: |
           set +e
           xcodebuild test-without-building \
-            -project SimShot.xcodeproj \
-            -scheme SimShot \
+            -project SimShot.xcodeproj -scheme SimShot \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath build \
             -resultBundlePath out/main.xcresult \
@@ -103,92 +119,25 @@ jobs:
           STATUS=$?
           set -e
           echo "xcodebuild exit code: $STATUS"
-          grep -E "^(CAPTURE|MISSED|CLAIM)" out/main.log || true
-          tail -60 out/main.log
+          grep -E "^(CAPTURE|MISSED|CLAIM|SWITCH|SCROLL|ALERTS)" out/main.log || true
 
-      # ---------------- the probes ----------------
+      # ---------------- App screens ----------------
 
-      - name: Probe the gestures and the other apps
+      - name: Capture the app figures
         run: |
           set +e
           xcodebuild test-without-building \
-            -project SimShot.xcodeproj \
-            -scheme SimShot \
+            -project SimShot.xcodeproj -scheme SimShot \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath build \
-            -resultBundlePath out/probes.xcresult \
-            -only-testing:SimShotUITests/GestureProbeTests \
+            -resultBundlePath out/apps.xcresult \
+            -only-testing:SimShotUITests/AppCaptureTests \
             CODE_SIGNING_ALLOWED=NO \
-            > out/probes.log 2>&1
+            > out/apps.log 2>&1
           STATUS=$?
           set -e
           echo "xcodebuild exit code: $STATUS"
-          grep -E "^(CAPTURE|MISSED)" out/probes.log || true
-          tail -40 out/probes.log
-
-      # ---------------- the same screens under three states ----------------
-
-      - name: Variant pass, normal text and light appearance
-        run: |
-          UDID="${{ steps.sim.outputs.udid }}"
-          xcrun simctl ui "$UDID" appearance light || true
-          xcrun simctl ui "$UDID" content_size large || true
-          sleep 5
-          set +e
-          xcodebuild test-without-building \
-            -project SimShot.xcodeproj -scheme SimShot \
-            -destination "platform=iOS Simulator,id=$UDID" \
-            -derivedDataPath build \
-            -resultBundlePath out/variant-normal.xcresult \
-            -only-testing:SimShotUITests/VariantCaptureTests \
-            TEST_RUNNER_SHOT_SUFFIX=normal \
-            CODE_SIGNING_ALLOWED=NO \
-            > out/variant-normal.log 2>&1
-          STATUS=$?
-          set -e
-          echo "exit: $STATUS"
-          grep -E "^(CAPTURE|MISSED)" out/variant-normal.log || true
-
-      - name: Variant pass, large accessibility text
-        run: |
-          UDID="${{ steps.sim.outputs.udid }}"
-          xcrun simctl ui "$UDID" content_size accessibility-extra-large || true
-          sleep 5
-          set +e
-          xcodebuild test-without-building \
-            -project SimShot.xcodeproj -scheme SimShot \
-            -destination "platform=iOS Simulator,id=$UDID" \
-            -derivedDataPath build \
-            -resultBundlePath out/variant-large-text.xcresult \
-            -only-testing:SimShotUITests/VariantCaptureTests \
-            TEST_RUNNER_SHOT_SUFFIX=large-text \
-            CODE_SIGNING_ALLOWED=NO \
-            > out/variant-large-text.log 2>&1
-          STATUS=$?
-          set -e
-          echo "exit: $STATUS"
-          grep -E "^(CAPTURE|MISSED)" out/variant-large-text.log || true
-
-      - name: Variant pass, dark appearance
-        run: |
-          UDID="${{ steps.sim.outputs.udid }}"
-          xcrun simctl ui "$UDID" content_size large || true
-          xcrun simctl ui "$UDID" appearance dark || true
-          sleep 5
-          set +e
-          xcodebuild test-without-building \
-            -project SimShot.xcodeproj -scheme SimShot \
-            -destination "platform=iOS Simulator,id=$UDID" \
-            -derivedDataPath build \
-            -resultBundlePath out/variant-dark.xcresult \
-            -only-testing:SimShotUITests/VariantCaptureTests \
-            TEST_RUNNER_SHOT_SUFFIX=dark \
-            CODE_SIGNING_ALLOWED=NO \
-            > out/variant-dark.log 2>&1
-          STATUS=$?
-          set -e
-          echo "exit: $STATUS"
-          grep -E "^(CAPTURE|MISSED)" out/variant-dark.log || true
+          grep -E "^(CAPTURE|MISSED|ALERTS)" out/apps.log || true
 
       # ---------------- pull the images out ----------------
 
@@ -196,7 +145,7 @@ jobs:
         if: always()
         run: |
           chmod +x extract-screenshots.sh
-          for pass in main probes variant-normal variant-large-text variant-dark; do
+          for pass in main apps; do
             if [ -d "out/$pass.xcresult" ]; then
               echo "########## $pass ##########"
               ./extract-screenshots.sh "out/$pass.xcresult" "out/screenshots/$pass" || true
@@ -213,17 +162,28 @@ jobs:
           {
             echo "# What the run reported"
             echo
+            echo "Workflow version: round-4"
+            echo
             echo "## Captures"
             grep -h "^CAPTURE" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
             echo
             echo "## Screens that could not be reached"
             grep -h "^MISSED" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
             echo
+            echo "## Switches"
+            grep -h "^SWITCH" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
             echo "## Interface label checks"
             grep -h "^CLAIM" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
             echo
-            echo "## Rows found in the Settings root"
-            grep -h "^SETTINGS_ROOT_ROWS" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo "## Row inventories"
+            grep -h "^INVENTORY" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
+            echo "## Scrolling"
+            grep -h "^SCROLL" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
+            echo
+            echo "## Alerts dismissed"
+            grep -h "^ALERTS" out/*.log 2>/dev/null | sort -u | grep . || echo "none"
             echo
             echo "## Test failures reported by xcodebuild"
             grep -hE "error:|Failing tests:|\*\* TEST" out/*.log 2>/dev/null | sort -u | head -40 | grep . || echo "none"
