@@ -1,0 +1,58 @@
+name: Simulator smoke test
+
+# Run by hand from the Actions tab. Also runs on a push so the script is
+# checked whenever it changes.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'simshot.sh'
+      - '.github/workflows/smoke-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Boot a simulator and capture reference screenshots
+    # xcode-27 is the STANDARD GitHub-hosted runner.
+    # Do not change this to xcode-27-xlarge: larger runners are billed and are
+    # not covered by the free allowance for public repositories.
+    runs-on: xcode-27
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Report what this runner has
+        run: |
+          echo "macOS:"; sw_vers
+          echo
+          echo "Xcode:"; xcodebuild -version
+          echo
+          echo "Runtimes:"; xcrun simctl list runtimes
+          echo
+          echo "iPhone device types:"; xcrun simctl list devicetypes | grep -i iphone || true
+
+      - name: Make the script executable
+        run: chmod +x simshot.sh
+
+      - name: Run the script
+        run: ./simshot.sh "iPhone 18 Pro" "iOS 27.0" out
+
+      - name: Check it actually produced the two screenshots
+        run: |
+          test -s out/home-screen.png || { echo "FAIL: no home-screen.png"; exit 1; }
+          test -s out/settings.png    || { echo "FAIL: no settings.png";    exit 1; }
+          echo "PASS: both screenshots exist and are non-empty."
+          ls -l out
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-output
+          path: out/
+          if-no-files-found: warn
+          retention-days: 7
