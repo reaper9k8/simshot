@@ -1,218 +1,155 @@
 import XCTest
 
-/// Settings screens. This is the area the second run proved the Simulator is
-/// actually good at: Appearance, Display & Text Size, and Privacy & Security.
+/// Only the figures that are still missing.
 ///
-/// Screens the second run showed are not worth capturing are not attempted
-/// again. The Settings root is captured once for the record only, because it
-/// is missing Wi-Fi, Bluetooth, Cellular, Battery, Notifications, Sounds &
-/// Haptics and Display & Brightness, and reads "Passcode" rather than
-/// "Face ID & Passcode".
+/// These are already captured, verified and saved, and are deliberately NOT
+/// re-run: FIG-05-02 B and C, FIG-05-03, FIG-22-02, FIG-22-04 A, FIG-22-05,
+/// FIG-04-04, and the dark and large text variants.
+///
+/// Figure IDs here are taken from `image-plan.md`. The third run invented IDs
+/// that were already assigned to different content, which would have corrupted
+/// `image-log.md` had the files been filed under them.
 final class FigureCaptureTests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = true
     }
 
-    // MARK: - Appearance
+    // MARK: - FIG-05-05  A Bold Text switched on.  B Liquid Glass slider.
 
-    func test_05_01_appearance_and_text_size() {
+    func test_05_05a_bold_text() {
         let settings = SettingsApp.open()
-        capture("FIG-05-02a-settings-root", "Settings root. For the record only.")
-
         guard settings.tapRow("Appearance") else {
-            return missed("appearance", "no Appearance row in the Settings list")
+            return missed("FIG-05-05A", "no Appearance row")
         }
-        capture("FIG-05-02b-appearance", "Settings >> Appearance")
-
-        guard settings.tapRow("Text Size") else {
-            return missed("text-size", "no Text Size row on the Appearance screen")
-        }
-        capture("FIG-05-02c-text-size", "Settings >> Appearance >> Text Size")
+        captureSwitchPair(settings, row: "Bold Text",
+                          "fig-05-05a-bold-text",
+                          "Settings >> Appearance")
     }
 
-    /// Bold Text off and on, the pair the second run failed to produce because
-    /// the switch carries no accessibility label of its own.
-    func test_05_02_bold_text_pair() {
+    /// The whole Liquid Glass screen is unusable: it is dominated by an Apple
+    /// promotional photograph of Apple Park, which the book bars. Captured
+    /// anyway so the slider at the bottom can be cropped out of it.
+    func test_05_05b_liquid_glass() {
         let settings = SettingsApp.open()
-
-        guard settings.tapRow("Appearance") else {
-            return missed("bold-text", "no Appearance row in the Settings list")
+        guard settings.tapRow("Appearance"),
+              settings.tapRow("Liquid Glass") else {
+            return missed("FIG-05-05B", "could not reach Liquid Glass")
         }
-        capture("FIG-05-05a-bold-text-off", "Appearance with Bold Text off")
-
-        guard settings.setSwitch("Bold Text", on: true) else {
-            return missed("FIG-05-05b", "could not switch Bold Text on")
-        }
-        sleep(3)
-        capture("FIG-05-05b-bold-text-on", "Appearance with Bold Text on")
-
-        _ = settings.setSwitch("Bold Text", on: false)
-        sleep(3)
+        capture("fig-05-05b-liquid-glass",
+                "Liquid Glass. CROP TO THE SLIDER ONLY: the preview above it is an Apple photograph.")
     }
 
-    func test_05_03_display_zoom() {
-        let settings = SettingsApp.open()
+    // MARK: - FIG-05-06  A Display Zoom, Larger Text selected.  B the confirmation.
 
-        guard settings.tapRow("Appearance") else {
-            return missed("display-zoom", "no Appearance row in the Settings list")
+    func test_05_06_display_zoom_confirmation() {
+        let settings = SettingsApp.open()
+        guard settings.tapRow("Appearance"),
+              settings.tapRow("Display Zoom") else {
+            return missed("FIG-05-06", "could not reach Display Zoom")
         }
-        guard settings.tapRow("Display Zoom") else {
-            return missed("display-zoom", "no Display Zoom row on the Appearance screen")
+        capture("fig-05-06a-display-zoom-default", "Display Zoom, Default selected")
+
+        guard settings.tapRow("Larger Text") else {
+            return missed("FIG-05-06A", "no Larger Text option on Display Zoom")
         }
-        capture("FIG-05-06-display-zoom", "Settings >> Appearance >> Display Zoom")
+        sleep(2)
+        capture("fig-05-06a2-display-zoom-larger-text-selected",
+                "Display Zoom with Larger Text selected")
+
+        // The brief calls the next step the Use Zoomed confirmation. Confirm
+        // what the control is actually called rather than assuming.
+        for candidate in ["Use Zoomed", "Set", "Done", "Continue"] {
+            if settings.buttons[candidate].exists {
+                claim("Display Zoom confirm control is labelled \(candidate)")
+                settings.buttons[candidate].tap()
+                sleep(3)
+                capture("fig-05-06b-display-zoom-confirmation",
+                        "The confirmation after choosing Larger Text")
+                return
+            }
+        }
+        claim("Display Zoom confirm control: none of Use Zoomed, Set, Done or Continue found")
+        capture("fig-05-06b-display-zoom-no-confirm",
+                "Display Zoom after choosing Larger Text, no confirm button found")
     }
 
-    // MARK: - Accessibility, Display & Text Size
+    // MARK: - FIG-05-08  A On/Off Labels off.  B the same switch with labels on.
 
-    func test_05_04_display_and_text_size() {
+    func test_05_08_on_off_labels() {
         let settings = SettingsApp.open()
-
-        guard settings.tapRow("Accessibility") else {
-            return missed("display-and-text-size", "no Accessibility row")
+        guard settings.tapRow("Accessibility"),
+              settings.tapRow("Display & Text Size") else {
+            return missed("FIG-05-08", "could not reach Display & Text Size")
         }
-        guard settings.tapRow("Display & Text Size") else {
-            return missed("display-and-text-size", "no Display & Text Size row")
-        }
-
-        captureScrolling(settings, "FIG-05-03",
-                         "Accessibility >> Display & Text Size")
-        inventory("display-and-text-size", settings.visibleRowLabels())
+        captureSwitchPair(settings, row: "On/Off Labels",
+                          "fig-05-08-on-off-labels",
+                          "Accessibility >> Display & Text Size")
     }
 
-    /// Show Borders off and on. A reader cannot picture what borders look like
-    /// from a sentence, and this is the one accessibility setting on this
-    /// screen that changes the whole interface visibly.
-    func test_05_05_show_borders_pair() {
+    /// Not a briefed figure yet, but Show Borders is the one setting on this
+    /// screen whose effect a reader cannot picture from a sentence.
+    func test_05_09_show_borders() {
         let settings = SettingsApp.open()
-
         guard settings.tapRow("Accessibility"),
               settings.tapRow("Display & Text Size") else {
             return missed("show-borders", "could not reach Display & Text Size")
         }
+        captureSwitchPair(settings, row: "Show Borders",
+                          "unassigned-show-borders",
+                          "Accessibility >> Display & Text Size")
+    }
 
-        guard settings.scrollToRow("Show Borders") != nil else {
-            claim("Show Borders row NOT found on Display & Text Size")
-            return missed("show-borders", "no Show Borders row")
-        }
-        claim("Show Borders row found on Display & Text Size")
-        capture("FIG-05-07a-show-borders-off", "Show Borders off")
+    // MARK: - FIG-22-03  A camera. B microphone. C contacts. D photos.
 
-        guard settings.setSwitch("Show Borders", on: true) else {
-            return missed("FIG-05-07b", "could not switch Show Borders on")
+    func test_22_03_permission_categories() {
+        let categories = [
+            ("Camera",     "a"),
+            ("Microphone", "b"),
+            ("Contacts",   "c"),
+            ("Photos",     "d")
+        ]
+
+        for (category, letter) in categories {
+            let settings = SettingsApp.open()
+            guard settings.tapRow("Privacy & Security") else {
+                missed("FIG-22-03\(letter.uppercased())", "no Privacy & Security row")
+                continue
+            }
+            guard settings.tapRow(category) else {
+                missed("FIG-22-03\(letter.uppercased())",
+                       "no \(category) row under Privacy & Security")
+                continue
+            }
+            capture("fig-22-03\(letter)-\(category.lowercased())",
+                    "Privacy & Security >> \(category), the list of apps that asked")
+            inventory("privacy-\(category.lowercased())", settings.visibleRowLabels())
         }
+    }
+
+    // MARK: - FIG-04-06  Search with the keyboard open
+
+    func test_04_06_spotlight() {
+        guard Launcher.goHome(terminating: [SimApp.settings, SimApp.safari,
+                                            SimApp.photos, SimApp.contacts]) else {
+            return missed("FIG-04-06", "the Home Screen never drew")
+        }
+        capture("probe-home-confirmed", "The Home Screen, confirmed drawn before the swipe")
+
+        let springboard = XCUIApplication(bundleIdentifier: SimApp.springboard)
+        let start = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.40))
+        let end   = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        start.press(forDuration: 0.1, thenDragTo: end)
         sleep(3)
-        capture("FIG-05-07b-show-borders-on", "Show Borders on, borders now drawn")
+        capture("fig-04-06-spotlight", "Search, after a swipe down on the Home Screen")
 
-        _ = settings.setSwitch("Show Borders", on: false)
-        sleep(2)
-    }
-
-    func test_05_06_larger_text() {
-        let settings = SettingsApp.open()
-
-        guard settings.tapRow("Accessibility"),
-              settings.tapRow("Display & Text Size") else {
-            return missed("larger-text", "could not reach Display & Text Size")
+        // The keyboard is what the brief actually asks for, so type into it.
+        if springboard.searchFields.firstMatch.exists {
+            springboard.searchFields.firstMatch.tap()
+            sleep(2)
+            capture("fig-04-06b-spotlight-keyboard", "Search with the keyboard open")
+        } else {
+            missed("FIG-04-06B", "no search field found after the swipe")
         }
-        guard settings.tapRow("Larger Text") else {
-            return missed("larger-text", "no Larger Text row")
-        }
-        capture("FIG-05-08-larger-text",
-                "Display & Text Size >> Larger Text, with the accessibility sizes switch")
-    }
-
-    // MARK: - Privacy & Security
-
-    func test_22_01_privacy_and_security() {
-        let settings = SettingsApp.open()
-
-        guard settings.tapRow("Privacy & Security") else {
-            return missed("privacy-and-security", "no Privacy & Security row")
-        }
-        captureScrolling(settings, "FIG-22-02", "Settings >> Privacy & Security")
-        inventory("privacy-and-security", settings.visibleRowLabels())
-    }
-
-    func test_22_02_location_services() {
-        let settings = SettingsApp.open()
-
-        guard settings.tapRow("Privacy & Security") else {
-            return missed("location-services", "no Privacy & Security row")
-        }
-        guard settings.tapRow("Location Services") else {
-            return missed("location-services", "no Location Services row")
-        }
-        capture("FIG-22-03-location-services",
-                "Privacy & Security >> Location Services, the main switch")
-        inventory("location-services", settings.visibleRowLabels())
-    }
-
-    func test_22_03_tracking() {
-        let settings = SettingsApp.open()
-
-        guard settings.tapRow("Privacy & Security") else {
-            return missed("tracking", "no Privacy & Security row")
-        }
-        guard settings.tapRow("Tracking") else {
-            return missed("tracking", "no Tracking row")
-        }
-        capture("FIG-22-04-tracking",
-                "Privacy & Security >> Tracking, with Allow Apps to Request to Track")
-    }
-
-    // MARK: - Inventories
-
-    /// The Settings root, and the two screens whose contents the book asserts.
-    /// Each stops as soon as the list stops moving.
-    func test_90_inventory_settings_root() {
-        let settings = SettingsApp.open()
-        captureScrolling(settings, "inventory-settings-root", "Settings root")
-        inventory("settings-root", settings.visibleRowLabels())
-    }
-
-    func test_91_inventory_accessibility() {
-        let settings = SettingsApp.open()
-        guard settings.tapRow("Accessibility") else {
-            return missed("accessibility-inventory", "no Accessibility row")
-        }
-        captureScrolling(settings, "inventory-accessibility", "Settings >> Accessibility")
-        inventory("accessibility", settings.visibleRowLabels())
-
-        // Still open from the second run: the runtime shows Spoken Content
-        // where the book says Read & Speak. Record it, change nothing.
-        claim(settings.scrollToRow("Read & Speak") != nil
-              ? "Read & Speak row FOUND"
-              : "Read & Speak row NOT found")
-        claim(settings.scrollToRow("Spoken Content") != nil
-              ? "Spoken Content row FOUND"
-              : "Spoken Content row NOT found")
-    }
-
-    /// General holds Software Update, iPhone Storage and About on a real
-    /// iPhone. Whether it does here decides Chapter 25.
-    func test_92_inventory_general() {
-        let settings = SettingsApp.open()
-        guard settings.tapRow("General") else {
-            return missed("general-inventory", "no General row")
-        }
-        captureScrolling(settings, "inventory-general", "Settings >> General")
-        inventory("general", settings.visibleRowLabels())
-
-        for wanted in ["Software Update", "iPhone Storage", "About"] {
-            claim(settings.scrollToRow(wanted) != nil
-                  ? "General contains \(wanted)"
-                  : "General does NOT contain \(wanted)")
-        }
-    }
-
-    /// The book states that every app's own settings nest under Apps.
-    func test_93_inventory_apps() {
-        let settings = SettingsApp.open()
-        guard settings.tapRow("Apps") else {
-            return missed("apps-inventory", "no Apps row")
-        }
-        captureScrolling(settings, "inventory-apps", "Settings >> Apps")
-        inventory("apps", settings.visibleRowLabels())
     }
 }

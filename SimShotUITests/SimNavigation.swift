@@ -146,66 +146,46 @@ extension XCUIApplication {
         return true
     }
 
-    /// The switch whose vertical centre is nearest the given row's, provided
-    /// the two overlap.
+    /// Taps the switch that belongs to a named row.
     ///
-    /// In iOS 27 Settings the row carries the accessibility label and the
-    /// switch beside it carries none, so a switch cannot be found by name.
-    /// This anchors to the row that was found by name, never to a fixed
-    /// coordinate, so it survives the row moving.
-    private func switchAligned(with row: XCUIElement) -> XCUIElement? {
-        let rowFrame = row.frame
-        guard rowFrame.height > 0 else { return nil }
-
-        var best: XCUIElement?
-        var bestDistance = CGFloat.greatestFiniteMagnitude
-
-        for candidate in switches.allElementsBoundByIndex {
-            guard candidate.exists, candidate.isHittable else { continue }
-            let frame = candidate.frame
-            let overlaps = frame.minY < rowFrame.maxY && frame.maxY > rowFrame.minY
-            guard overlaps else { continue }
-
-            let distance = abs(frame.midY - rowFrame.midY)
-            if distance < bestDistance {
-                bestDistance = distance
-                best = candidate
-            }
-        }
-        return best
-    }
-
-    /// Sets a switch to a wanted state. Returns false when the row or its
-    /// switch cannot be found, or when the tap did not change it.
+    /// Two earlier attempts failed. Looking the switch up by name fails
+    /// because in iOS 27 Settings the row carries the accessibility label and
+    /// the switch carries none. Enumerating every switch to find the aligned
+    /// one crashed the third run outright, because the element list goes stale
+    /// while the list is still settling:
+    ///
+    ///     Failed to get matching snapshot: No matches found for Element at
+    ///     index 3
+    ///
+    /// So no enumeration. The row is found by name, and the tap lands across
+    /// from it at the right hand end of the screen, where a Settings switch
+    /// always sits. The vertical position comes from the row, so it follows
+    /// the row when the row moves.
     @discardableResult
-    func setSwitch(_ label: String, on wanted: Bool) -> Bool {
+    func tapSwitch(besideRow label: String) -> Bool {
         guard let rowElement = scrollToRow(label) else {
             print("SWITCH\t\(label)\trow not found")
             return false
         }
+        usleep(1_000_000)
 
-        // The easy case first, for switches that do carry their own label.
-        let predicate = NSPredicate(format: "identifier == %@ OR label == %@", label, label)
-        let named = switches.matching(predicate).firstMatch
-
-        let toggle: XCUIElement
-        if named.exists, named.isHittable {
-            toggle = named
-        } else if let aligned = switchAligned(with: rowElement) {
-            toggle = aligned
-        } else {
-            print("SWITCH\t\(label)\tno switch aligned with the row")
+        let rowFrame = rowElement.frame
+        let screen = frame
+        guard screen.height > 0, rowFrame.height > 0 else {
+            print("SWITCH\t\(label)\tno usable frame")
             return false
         }
 
-        if ((toggle.value as? String) == "1") != wanted {
-            toggle.tap()
-            usleep(2_000_000)
+        let dy = rowFrame.midY / screen.height
+        guard dy > 0.02, dy < 0.98 else {
+            print("SWITCH\t\(label)\trow is too close to an edge to tap safely")
+            return false
         }
 
-        let result = ((toggle.value as? String) == "1") == wanted
-        print("SWITCH\t\(label)\twanted \(wanted)\t\(result ? "set" : "FAILED")")
-        return result
+        coordinate(withNormalizedOffset: CGVector(dx: 0.88, dy: dy)).tap()
+        usleep(2_500_000)
+        print("SWITCH\t\(label)\ttapped at dy \(String(format: "%.3f", dy))")
+        return true
     }
 
     /// Walks back up the navigation stack until the root screen is showing.
@@ -270,18 +250,32 @@ enum Launcher {
         return app
     }
 
-    /// Returns to the Home Screen.
+    /// Returns to the Home Screen and waits until it has actually drawn.
     ///
-    /// Pressing Home while an app holds the foreground does not always take,
-    /// which cost the second run its Spotlight capture. Terminating the named
-    /// apps first makes it deterministic.
-    static func goHome(terminating bundleIDs: [String] = []) {
+    /// Terminating the apps first was not enough: the third run photographed a
+    /// blank white screen here, because a fixed sleep expired before
+    /// SpringBoard had rendered. Wait for the icons instead of trusting a
+    /// clock.
+    @discardableResult
+    static func goHome(terminating bundleIDs: [String] = []) -> Bool {
         for id in bundleIDs {
             XCUIApplication(bundleIdentifier: id).terminate()
         }
         Alerts.dismissAll()
-        XCUIDevice.shared.press(.home)
-        sleep(3)
+
+        let springboard = XCUIApplication(bundleIdentifier: SimApp.springboard)
+        for attempt in 1...4 {
+            XCUIDevice.shared.press(.home)
+            sleep(3)
+            if springboard.icons.count > 0 {
+                sleep(2)
+                print("HOME\treached after \(attempt) attempt(s), \(springboard.icons.count) icons")
+                return true
+            }
+            print("HOME\tattempt \(attempt): no icons drawn yet")
+        }
+        print("HOME\tnever drew any icons")
+        return false
     }
 }
 
@@ -318,33 +312,82 @@ extension XCTestCase {
     }
 
     /// Captures a scrolling list, stopping as soon as the screen stops
-    /// changing. The second run took six identical pictures of a list two
-    /// screens tall; this takes two.
+    /// changing.
+    ///
+    /// The third run still took six pictures of a two screen list. The reason
+    /// was that it compared one screenshot and saved a different one taken a
+    /// moment later, so a rubber band bounce made every comparison look like a
+    /// change. One screenshot per pass now, compared and saved.
     @discardableResult
     func captureScrolling(_ app: XCUIApplication,
                           _ baseName: String,
                           _ note: String,
                           maxScreens: Int = 6) -> Int {
         let letters = ["a", "b", "c", "d", "e", "f", "g", "h"]
-        var lastData: Data?
+        let suffix = ProcessInfo.processInfo.environment["SHOT_SUFFIX"]
+            .flatMap { $0.isEmpty ? nil : "__" + $0 } ?? ""
+
+        var previous: Data?
         var taken = 0
 
         for index in 0..<min(maxScreens, letters.count) {
             Alerts.dismissAll(in: app)
-            let data = XCUIScreen.main.screenshot().pngRepresentation
-            if let previous = lastData, previous == data {
-                print("SCROLL\t\(baseName)\treached the bottom after \(taken) screen(s)")
+            sleep(2)                      // let any bounce settle before looking
+
+            let shot = XCUIScreen.main.screenshot()
+            let data = shot.pngRepresentation
+
+            if let previous = previous, previous == data {
+                print("SCROLL\t\(baseName)\tbottom reached after \(taken) screen(s)")
                 break
             }
-            lastData = data
+            previous = data
 
-            capture("\(baseName)\(letters[index])", "\(note), screen \(index + 1)")
+            let name = "\(baseName)\(letters[index])\(suffix)"
+            let attachment = XCTAttachment(screenshot: shot)
+            attachment.name = "SHOT__" + name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+
+            let image = shot.image
+            print("CAPTURE\t\(name)\t\(Int(image.size.width * image.scale))x\(Int(image.size.height * image.scale))\t\(note), screen \(index + 1)")
             taken += 1
 
             app.swipeUp()
-            sleep(1)
+            sleep(2)
         }
         return taken
+    }
+
+    /// Photographs a switch row in both states.
+    ///
+    /// Reading a switch's value is unreliable in iOS 27 Settings, so nothing
+    /// here depends on reading it. Both states are captured and the right one
+    /// is chosen afterwards by looking at the two pictures.
+    @discardableResult
+    func captureSwitchPair(_ app: XCUIApplication,
+                           row rowLabel: String,
+                           _ baseName: String,
+                           _ note: String) -> Bool {
+        guard app.scrollToRow(rowLabel) != nil else {
+            missed(baseName, "no \(rowLabel) row on this screen")
+            return false
+        }
+        sleep(1)
+        capture("\(baseName)-1", "\(note). \(rowLabel) before tapping.")
+
+        guard app.tapSwitch(besideRow: rowLabel) else {
+            missed(baseName, "could not tap the switch beside \(rowLabel)")
+            return false
+        }
+        sleep(3)
+        capture("\(baseName)-2", "\(note). \(rowLabel) after tapping.")
+
+        // Put it back, re-finding the row because turning some of these on
+        // relays the whole screen.
+        _ = app.tapSwitch(besideRow: rowLabel)
+        sleep(2)
+        return true
     }
 
     /// Records a screen that could not be reached. The run carries on.
