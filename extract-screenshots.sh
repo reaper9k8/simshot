@@ -93,7 +93,23 @@ else:
         pairs.append((os.path.join(raw, name), name))
 
 def safe(name):
+    """Turn an attachment's human readable name into a filename.
+
+    The exporter hands back names shaped like
+
+        SHOT__FIG-05-02b-appearance_0_9EA90FA6-....png
+
+    so the marker prefix, the attachment index and the UUID all have to come
+    off, and the extension has to come off before a new one is appended.
+    Leaving any of that in produced `...png.png` names on the second run.
+    """
     name = re.sub(r"^SHOT__", "", name)
+    # Strip the extension, then the index and UUID, then any extension the
+    # first pass left buried behind them. Text attachments carry the extension
+    # inside their own name, so a single pass is not enough.
+    for _ in range(2):
+        name = re.sub(r"\.(png|jpg|jpeg|heic|txt|json)$", "", name, flags=re.I)
+        name = re.sub(r"_\d+_[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27,}$", "", name)
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
     return name or "unnamed"
 
@@ -104,14 +120,13 @@ for source, human in pairs:
         continue
     # Keep only the captures the tests named. XCTest adds its own automatic
     # screenshots and those would drown the real ones.
-    if not human.startswith("SHOT__") and not human.endswith(".txt"):
+    is_text = human.startswith("rows-") or ".txt" in human.lower()
+    if not human.startswith("SHOT__") and not is_text:
         skipped += 1
         continue
 
     base = safe(human)
-    extension = os.path.splitext(source)[1] or (".txt" if base.endswith(".txt") else ".png")
-    if base.endswith(".txt"):
-        base, extension = base[:-4], ".txt"
+    extension = ".txt" if is_text else (os.path.splitext(source)[1] or ".png")
 
     target = os.path.join(out, base + extension)
     counter = 2
